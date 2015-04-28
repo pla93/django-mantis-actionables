@@ -95,6 +95,9 @@ Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
      (function($)
      {
         $(document).ready(function() {
+             //hook up investigation form submit:
+             //all checked item ids are concatenated in order to transfer it to the backend
+             //transfer is done by a hidden input field
              $("form#investigation").submit(function(event) {
                 var checked_inputs = $("tr input.action-select:checked");
                 var pks = "";
@@ -115,14 +118,17 @@ Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
                 return true;
             });
 
+            //checkbox in column header
+            //all or no item can be selected by this checkbox
             $("input#action-toggle").change(function() {
                 var _new_state = this.checked;
                 $("tr input.action-select").each(function(index) {
-                    console.log(this);
                     $(this).prop('checked', _new_state);
                 });
             });
 
+            //hook up filter form submit:
+            //add cache_session_key to GET request in order to retrieve the cached data in backend
             $("form#filter").submit(function(event) {
                 $("input#id_cache_session_key").appendTo(this);
                 return true;
