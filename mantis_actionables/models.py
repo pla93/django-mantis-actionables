@@ -909,5 +909,67 @@ class ActionableTaggingHistory(models.Model):
         ActionableTaggingHistory.objects.bulk_create(entry_list)
 
 
+class vSObs2Info(models.Model):
+
+    id = models.PositiveIntegerField(primary_key=True)
+
+    type = models.CharField(max_length=255)
+    subtype = models.CharField(max_length=255)
+    value = models.CharField(max_length=2048)
+    actionable_tags_cache = models.TextField()
+
+    referenced_source = models.ForeignKey(Source,
+                                          related_name='+',
+                                          on_delete=models.DO_NOTHING)
+    source_outdated = models.BooleanField()
+    source_tlp = models.SmallIntegerField()
+    source_timestamp = models.DateTimeField()
+
+    referenced_stix_entity = models.ForeignKey(STIX_Entity,
+                                               related_name='+',
+                                               on_delete=models.DO_NOTHING)
+    stix_entity_type = models.CharField(max_length=256)
+    stix_entity_essence = models.TextField()
+
+    top_level_iobject = models.ForeignKey(InfoObject,
+                                          related_name='+',
+                                          on_delete=models.DO_NOTHING)
+    top_level_iobject_identifier = models.ForeignKey(Identifier,
+                                                     related_name='+',
+                                                     on_delete=models.DO_NOTHING)
+    top_level_iobject_identifier_ns_uri = models.CharField(max_length=256)
+    top_level_iobject_identifier_uid = models.SlugField(max_length=255)
+    top_level_iobject_identifier_latest_name = models.CharField(max_length=255)
+
+    iobject = models.ForeignKey(InfoObject,
+                                related_name='+',
+                                on_delete=models.DO_NOTHING)
+    iobject_identifier = models.ForeignKey(Identifier,
+                                           related_name='+',
+                                           on_delete=models.DO_NOTHING)
+    iobject_identifier_ns_uri = models.CharField(max_length=256)
+    iobject_identifier_uid = models.SlugField(max_length=255)
+    iobject_identifier_latest_name = models.CharField(max_length=255)
+
+    import_info = models.ForeignKey(ImportInfo,
+                                    related_name='+',
+                                    on_delete=models.DO_NOTHING)
+    import_info_ns_uri = models.CharField(max_length=256)
+    import_info_uid = models.SlugField(max_length=255)
+    import_info_name = models.CharField(max_length=255)
+
+    status_ts = models.DateTimeField()
+    status = models.ForeignKey(Status,
+                               related_name='+',
+                               on_delete=models.DO_NOTHING)
+    status_most_permissive_tlp = models.SmallIntegerField()
+    status_max_confidence = models.SmallIntegerField()
+    status_best_processing = models.SmallIntegerField()
+    status_kill_chain_phases = models.TextField()
+    status_most_restrictive_tlp = models.SmallIntegerField()
+
+    class Meta:
+        managed = False
+        db_table = 'vsobs2info'
 
 
