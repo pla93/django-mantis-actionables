@@ -78,10 +78,8 @@ FROM
     ( mantis_actionables_singletonobservable.id = mantis_actionables_status2x.object_id AND (mantis_actionables_status2x.content_type_id = 77))
     LEFT OUTER JOIN mantis_actionables_status ON
     ( mantis_actionables_status2x.status_id = mantis_actionables_status.id )
-    INNER JOIN mantis_actionables_status2x T20 ON
-    ( mantis_actionables_singletonobservable.id = T20.object_id AND (T20.content_type_id = 77))
 WHERE
-    T20.active = True
+    mantis_actionables_status2x.active = True
 """
 
 undo_statement = """DROP VIEW vsobs2info"""
