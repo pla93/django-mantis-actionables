@@ -50,7 +50,7 @@ from dingos.core.utilities import listify, set_dict
 from dingos.templatetags.dingos_tags import show_TagDisplay
 
 
-from .models import SingletonObservable,SingletonObservableType,Source,ActionableTag,ActionableTaggingHistory,Context,Status,ImportInfo,Status2X, TagInfo
+from .models import SingletonObservable,SingletonObservableType,Source,ActionableTag,ActionableTaggingHistory,Context,Status,ImportInfo,Status2X, TagInfo, vSObs2Info
 from .filter import ActionablesContextFilter, SingletonObservablesFilter, ImportInfoFilter, BulkInvestigationFilter, ExtendedSingletonObservablesFilter
 
 from .forms import ContextEditForm, BulkTaggingForm
@@ -99,7 +99,7 @@ def datatable_query(post, **kwargs):
     display_cols = kwargs.pop('display_columns')
     config = kwargs.pop('query_config')
     
-    q = config['base'].objects.all()
+    q = config['base'].objects.all().distinct()
 
     query_modifiers = config.get('query_modifiers', [])
 
@@ -381,33 +381,33 @@ class SingeltonObservablesWithSourceOneTableDataProvider(BasicTableDataProvider)
     # if the SingletonObservable occurs both in a STIX Object and a
     # ImportInfo, always rows for both are returned, which is confusing.
 
-    double_barrelled_name_query = lambda filter_wert : Q(**{'sources__import_info__name__icontains':filter_wert}) | Q(**{'sources__top_level_iobject__name__icontains':filter_wert})
+    double_barrelled_name_query = lambda filter_wert : Q(**{'import_info_name__icontains':filter_wert}) | Q(**{'top_level_iobject_identifier_latest_name__icontains':filter_wert})
 
     ALL_IMPORTS_TABLE_SPEC = {
-        'model' : SingletonObservable,
-        'query_modifiers' : [('filter',Q(sources__outdated=False)),
+        'model' : vSObs2Info,
+        'query_modifiers' : [('filter',Q(source_outdated=False)),
         ],
         'count': False,
         'COMMON_BASE' : [
 
-                ('sources__timestamp','Source TS','0'), #0
-                ('sources__tlp','TLP','0'), #1
-                ('type__name','Type','0'), #2
-                ('subtype__name','Subtype','0'), #3
+                ('source_timestamp','Source TS','0'), #0
+                ('source_tlp','TLP','0'), #1
+                ('type','Type','0'), #2
+                ('subtype','Subtype','0'), #3
                 ('value','Value','1'), #4
-                ('sources__iobject_identifier__namespace__uri','Indicator Source','0'), #5
-                ('sources__related_stix_entities__entity_type__name','Context Type','0'), #6
-                ('sources__related_stix_entities__essence','Context Info','0'), #7
+                ('iobject_identifier_ns_uri','Indicator Source','0'), #5
+                ('stix_entity_type','Context Type','0'), #6
+                ('stix_entity_essence','Context Info','0'), #7
             ],
-        'QUERY_ONLY' : [('sources__top_level_iobject_identifier__namespace__uri','Report Source','0'), #0
-                             ('sources__top_level_iobject__name','Report Name','0'), #1
-                             ('sources__top_level_iobject_id','Report InfoObject PK','0'), #2
-                             ('sources__import_info__namespace__uri','Report Source','0'), #3
-                             ('sources__import_info__name','Report Name','0'), #4
-                             ('sources__import_info_id','Report Import Info PK','0'), #5,
+        'QUERY_ONLY' : [('top_level_iobject_identifier_ns_uri','Report Source','0'), #0
+                             ('top_level_iobject_identifier_latest_name','Report Name','0'), #1
+                             ('top_level_iobject_id','Report InfoObject PK','0'), #2
+                             ('import_info_ns_uri','Report Source','0'), #3
+                             ('import_info_name','Report Name','0'), #4
+                             ('import_info_id','Report Import Info PK','0'), #5,
                              ('id','Singleton Observable PK','0') #6
                             ],
-        'DISPLAY_ONLY' :  [('sources__import_info__namespace__uri','Report Source','0'),
+        'DISPLAY_ONLY' :  [('import_info_ns_uri','Report Source','0'),
                            # Below, you can try the Q-object generator from above
                              ('' # double_barrelled_name_query
                              ,'Report Name','0'),
@@ -505,6 +505,7 @@ class SingeltonObservablesWithSourceOneTableDataProviderFilterByContext(BasicTab
     }
 
     table_spec[table_name_slug(TABLE_NAME_ALL_IMPORTS_F_CONTEXT)] = ALL_IMPORTS_TABLE_SPEC_F_CONTEXT
+
 
 class DashboardDataProvider(BasicTableDataProvider):
     view_name = "dashboard"
@@ -957,19 +958,19 @@ class SingletonObservablesWithStatusOneTableDataProvider(BasicTableDataProvider)
     TABLE_NAME_ALL_STATI = "Status information for indicators"
 
     ALL_STATI_TABLE_SPEC = {
-        'model' : SingletonObservable,
-        'query_modifiers' : [('filter',Q(status_thru__active=True))],
+        'model' : vSObs2Info,
+        'query_modifiers' : [],
 
         'count': False,
         'COMMON_BASE' : [
-                ('status_thru__timestamp','Status Timestamp','0')  , #0
-                ('status_thru__status__most_permissive_tlp','lightest TLP','0')  , #1
-                ('status_thru__status__most_restrictive_tlp','darkest TLP','0')  , #2
-                ('status_thru__status__max_confidence','Max confidence','0'), #3
-                ('status_thru__status__best_processing','Processing','0'), #4
-                ('status_thru__status__kill_chain_phases','Kill Chain','0'), #5
-                ('type__name','Type','1'), #6
-                ('subtype__name','Subtype','1'), #7
+                ('status_ts','Status Timestamp','0')  , #0
+                ('status_most_permissive_tlp','lightest TLP','0')  , #1
+                ('status_most_restrictive_tlp','darkest TLP','0')  , #2
+                ('status_max_confidence','Max confidence','0'), #3
+                ('status_best_processing','Processing','0'), #4
+                ('status_kill_chain_phases','Kill Chain','0'), #5
+                ('type','Type','1'), #6
+                ('subtype','Subtype','1'), #7
                 ('value','Value','1'), #8
                 ('actionable_tags_cache','Tags','1'), #9
 
