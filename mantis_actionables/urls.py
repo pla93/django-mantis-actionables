@@ -63,5 +63,9 @@ urlpatterns = patterns(
     #Actions
     url(r'^action/investigate$', BulkInvestigationFilterView.as_view(), name= "actionables_action_investigate"),
 
+    #Bulk Search
+    url(r'^bulk_search/$', BulkSearchView.as_view(), name="actionables_bulk_search"),
+    url(r'^bulk_search/result/$', BulkSearchResultView.as_view(), name="actionables_bulk_search_result"),
+    url(r'^tbl_data/bulk_search_result$', BulkSearchResultTableDataProvider.as_view(), name="actionables_dataprovider_singletons_bulk_search"),
 
 )

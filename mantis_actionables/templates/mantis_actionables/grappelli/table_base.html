@@ -11,6 +11,7 @@
     var datatables_dom = '{{ datatables_dom }}';
     //set pagination_length here in order to transfer it to datatable init
     var pagination_length = {{ table_rows }};
+    var bulk_search_id = '{% if view.id %}{{ view.id }}{% endif %}';
   </script>
 {% endblock javascripts %}
 

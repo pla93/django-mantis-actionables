@@ -46,7 +46,8 @@
                     url: view_url,
                     type: 'POST',
                     data: {
-                        "table_type": tbl_key
+                        "table_type": tbl_key,
+                        "bulk_search_id" : bulk_search_id
                     },
                     dataSrc: function(data){
                         // Fill the selectors for filters

@@ -34,6 +34,7 @@ from django.template.loader import render_to_string
 from django.db.models import Q
 from django.contrib.auth.models import User
 from django.core.exceptions import ObjectDoesNotExist
+from django.core.cache import caches
 from django.contrib.contenttypes.models import ContentType
 from django.http import HttpResponseRedirect
 from django.core.urlresolvers import reverse
@@ -53,7 +54,8 @@ from dingos.templatetags.dingos_tags import show_TagDisplay
 from .models import SingletonObservable,SingletonObservableType,Source,ActionableTag,ActionableTaggingHistory,Context,Status,ImportInfo,Status2X, TagInfo
 from .filter import ActionablesContextFilter, SingletonObservablesFilter, ImportInfoFilter, BulkInvestigationFilter, ExtendedSingletonObservablesFilter
 
-from .forms import ContextEditForm, BulkTaggingForm
+from .forms import ContextEditForm, BulkTaggingForm, BulkSearchForm
+from .infoextractor import *
 
 from dingos.models import vIO2FValue, Identifier, InfoObject
 
@@ -98,8 +100,13 @@ def datatable_query(post, **kwargs):
     cols = kwargs.pop('query_columns')
     display_cols = kwargs.pop('display_columns')
     config = kwargs.pop('query_config')
+    base_query_mod = kwargs.get('base_query_mod')
     
-    q = config['base'].objects.all()
+    if base_query_mod:
+        q = config['base'].objects.filter(base_query_mod).all()
+    else:
+        q = config['base'].objects.all()
+
 
     query_modifiers = config.get('query_modifiers', [])
 
@@ -326,6 +333,7 @@ class BasicTableDataProvider(BasicJSONView):
     @property
     def returned_obj(self):
         POST = self.request.POST.copy()
+
         if not POST:
             POST = self.request.GET.copy()
         draw_val = safe_cast(POST.get('draw', 0), int, 0)
@@ -342,7 +350,7 @@ class BasicTableDataProvider(BasicJSONView):
         # http://www.datatables.net/manual/server-side#Configuration
 
         table_name = POST.get('table_type','').replace(' ','_')
-
+        bulk_search_id = POST.get('bulk_search_id','')
 
         config_info = self.get_curr_cols(table_name)
 
@@ -350,8 +358,35 @@ class BasicTableDataProvider(BasicJSONView):
                 'query_columns' : config_info['query_columns'],
                 'display_columns' : config_info.get('display_columns',config_info['query_columns']),
                 'filter' : self.filter,
-                'query_config' : config_info['query_config'],
+                'query_config' : config_info['query_config']
                 }
+
+        if bulk_search_id:
+            #if a bulk_search_id is provided there should be an entry in the cache
+            bulk_search_cache = caches['actionables_bulk_search']
+            current_search_info = bulk_search_cache.get(bulk_search_id)
+            base_query_mod = None
+
+            for ind in current_search_info['contains']:
+                curr = {
+                    "value__icontains": ind
+                }
+                if not base_query_mod:
+                    base_query_mod = Q(**curr)
+                else:
+                    base_query_mod |= Q(**curr)
+
+            for ind,type in current_search_info['exact']:
+                curr = {
+                    "value__iexact": ind,
+                    "type__name": type
+                }
+                if not base_query_mod:
+                    base_query_mod = Q(**curr)
+                else:
+                    base_query_mod |= Q(**curr)
+
+            kwargs['base_query_mod'] = base_query_mod
 
         logger.debug("About to start database query for user %s for table %s" % (self.request.user,table_name))
         q,res['recordsTotal'],res['recordsFiltered'] = datatable_query(POST, **kwargs)
@@ -1791,4 +1826,148 @@ class ActionablesContextEditView(BasicDetailView):
 
     def get_object(self):
         return Context.objects.get(name=self.kwargs['context_name'])
+
+
+class BulkSearchView(BasicTemplateView):
+
+    template_name = 'mantis_actionables/%s/BulkSearchView.html' % DINGOS_TEMPLATE_FAMILY
+
+    title = 'Actionables Bulk Search'
+
+    form_class = BulkSearchForm
+
+    def get_context_data(self, **kwargs):
+        context = super(BulkSearchView, self).get_context_data(**kwargs)
+        form = self.form_class()
+        form.fields['id'].initial = uuid4()
+        context['form'] = form
+        return context
+
+
+class BulkSearchResultTableDataProvider(BasicTableDataProvider):
+
+    view_name = "singletons_bulk_search"
+
+    table_spec =  {}
+
+    TABLE_NAME_BULK_SEARCH_RESULT = 'Indicators found in system'
+
+    BULK_SEARCH_RESULT_TABLE_SPEC = {
+        'model' : SingletonObservable,
+        'query_modifiers' : [('filter',Q(sources__outdated=False)),
+        ],
+        'count': False,
+        'COMMON_BASE' : [
+                ('sources__timestamp','Source TS','0'), #0
+                #('sources__tlp','TLP','0'), #1
+                ('type__name','Type','0'), #2
+                ('subtype__name','Subtype','0'), #3
+                ('value','Value','1'), #4
+                #('sources__iobject_identifier__namespace__uri','Indicator Source','0'), #5
+                #('sources__related_stix_entities__entity_type__name','Context Type','0'), #6
+                #('sources__related_stix_entities__essence','Context Info','0'), #7
+            ],
+        'QUERY_ONLY' : [('sources__top_level_iobject_identifier__namespace__uri','Report Source','0'), #0
+                             ('sources__top_level_iobject__name','Report Name','0'), #1
+                             ('sources__top_level_iobject_id','Report InfoObject PK','0'), #2
+                             ('sources__import_info__namespace__uri','Report Source','0'), #3
+                             ('sources__import_info__name','Report Name','0'), #4
+                             ('sources__import_info_id','Report Import Info PK','0'), #5,
+                             ('id','Singleton Observable PK','0') #6
+                            ],
+        'DISPLAY_ONLY' :  [('sources__import_info__namespace__uri','Report Source','0'),
+                                ('','Report Name','0'),
+                             ],
+        #column ids (starting with 0 = first column) where a column based filter should be displayed
+        'COLUMN_FILTER' : [1,2,3]
+    }
+
+    table_spec[table_name_slug(TABLE_NAME_BULK_SEARCH_RESULT)] = BULK_SEARCH_RESULT_TABLE_SPEC
+
+    table_rows = 10
+
+    @classmethod
+    def BULK_SEARCH_RESULT_POSTPROCESSOR(cls,table_spec,res,q):
+        offset = table_spec['offset']
+
+        for row in q:
+            row = [my_escape(e) for e in list(row)]
+
+            #row[1] = Source.TLP_COLOR_CSS.get(int(row[1]),"ERROR")
+            if row[offset+2]:
+                row[offset+1] = "<a href='%s'>%s</a>" % (reverse('url.dingos.view.infoobject',kwargs={'pk':int(row[offset+2])}),
+                                                                 row[offset+1])
+            else:
+                row[offset+0] = row[offset+3]
+                row[offset+1] = "<a href='%s'>%s</a>" % (reverse('actionables_import_info_details',kwargs={'pk':int(row[offset+5])}),
+                                                                 row[offset+4])
+
+            row[3] = "<a href='%s'>%s</a>" % (reverse('actionables_singleton_observables_details',kwargs={'pk':int(row[offset+6])}),
+                                                                 row[3])
+
+            if not row[4]:
+                row[4] = row[offset+3]
+            row = row[:-4]
+
+            res['data'].append(row)
+
+
+    def postprocess(self,table_name,res,q):
+        table_spec = self.table_spec[table_name]
+        return self.BULK_SEARCH_RESULT_POSTPROCESSOR(table_spec,res,q)
+
+
+class BulkSearchResultView(BasicDatatableView):
+
+    data_provider_class = BulkSearchResultTableDataProvider
+
+    template_name = 'mantis_actionables/%s/table_base.html' % DINGOS_TEMPLATE_FAMILY
+
+    title = 'Bulk Search Result'
+
+    table_spec = [data_provider_class.TABLE_NAME_BULK_SEARCH_RESULT]
+
+    def post(self, request, *args, **kwargs):
+        search_form = BulkSearchForm(request.POST)
+        bulk_search_cache = caches['actionables_bulk_search']
+
+        if not search_form.is_valid():
+            #TODO show error here
+            return HttpResponseRedirect('/mantis/actionables/bulk_search/')
+        else:
+            search_term = search_form.cleaned_data['search_term']
+            to_parse = []
+            no_parse_ind = []
+
+            for line in unicode.splitlines(search_term):
+                line = line.strip()
+                if line.count(" ") > 0:
+                    to_parse.append(line)
+                else:
+                    no_parse_ind.append(line)
+
+            self.id = search_form.cleaned_data['id']
+
+            to_parse = ' '.join(to_parse)
+            extractor = InfoExtractor(to_parse)
+            processors = [ProcessorMD5,ProcessorIP,ProcessorEmail,ProcessorURI,ProcessorDomain,ProcessorFile]
+            map(lambda p : extractor.add_processor(p), processors)
+
+            parsed_ind = []
+            for token, infotype, original_token in extractor.result():
+                parsed_ind.append((token,infotype))
+
+            #TODO search id is set here in order to retrieve the query infos from the cache when filling datatable
+            #entry never expires, should be changed!
+            bulk_search_cache.set(self.id, {
+                'contains': no_parse_ind,
+                'exact': parsed_ind
+            }, None)
+        return super(BulkSearchResultView, self).get(request, *args, **kwargs)
+
+
+
+
+
+
 

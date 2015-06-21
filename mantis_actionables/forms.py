@@ -18,6 +18,7 @@
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 
+from uuid import uuid4
 import autocomplete_light
 from .models import Context, TagInfo
 from django import forms
@@ -142,3 +143,22 @@ class BulkTaggingForm(ResultActionForm):
                 self.add_error('reason', forms.ValidationError("Please enter a reason for removing the tags."))
 
         return cleaned_data
+
+
+class BulkSearchForm(forms.Form):
+    search_term = forms.CharField(widget=forms.Textarea(), required=True)
+    id = forms.CharField(widget=forms.HiddenInput, required=True)
+
+    # CHOICES_MODE = [
+    #     ("icontains", "Contains Value"),
+    #     ("iexact", "Exact Match")
+    # ]
+    # search_mode = forms.ChoiceField(choices=CHOICES_MODE, widget=forms.RadioSelect(), required=True)
+    #
+    # CHOICES_PARSE = [
+    #     (True, "Parse Textarea"),
+    #     (False, "One Indicator Line by line")
+    # ]
+    # parse_textfield = forms.ChoiceField(choices=CHOICES_PARSE, widget=forms.RadioSelect(), required=True)
+
+

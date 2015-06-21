@@ -29,6 +29,7 @@ Menu.add_item("mantis_main",
                        MenuItem("Status Infos", reverse("actionables_all_status_infos"), weight = 5 ),
                        MenuItem("CSV Imports", reverse("actionables_import_info_list"), weight = 5 ),
                        MenuItem("Investigations", reverse("actionables_context_list"), weight = 5 ),
+                       MenuItem("Bulk Search", reverse("actionables_bulk_search"), weight = 5),
                    )
                )
 )
