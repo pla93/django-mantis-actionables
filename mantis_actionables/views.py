@@ -104,6 +104,8 @@ def datatable_query(post, **kwargs):
     base_query_mod = kwargs.get('base_query_mod')
     
     if base_query_mod:
+        print "--------"
+        print base_query_mod
         q = config['base'].objects.filter(base_query_mod).all()
     else:
         q = config['base'].objects.all()
@@ -258,6 +260,9 @@ class BasicTableDataProvider(BasicJSONView):
     #pagination length
     table_rows = 10
 
+    #needed for bulk search
+    base_query_mod = None
+
     @classmethod
     def get_cols_dict(cls,table_name):
 
@@ -359,6 +364,7 @@ class BasicTableDataProvider(BasicJSONView):
                 'display_columns' : config_info.get('display_columns',config_info['query_columns']),
                 'filter' : self.filter,
                 'query_config' : config_info['query_config'],
+                'base_query_mod': self.base_query_mod
                 }
 
         logger.debug("About to start database query for user %s for table %s" % (self.request.user,table_name))
@@ -1882,7 +1888,7 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
                 row[4] = row[offset+3]
             row = row[:-4]
 
-            res['data'].add(tuple(row))
+            res['data'].append(row)
 
 
     def postprocess(self,table_name,res,q):
@@ -1892,141 +1898,34 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
     @property
     def returned_obj(self):
         POST = self.request.POST.copy()
-
-        if not POST:
-            POST = self.request.GET.copy()
-        draw_val = safe_cast(POST.get('draw', 0), int, 0)
-        res = {
-            'draw': draw_val,
-            'recordsTotal': 0,
-            'recordsFiltered': 0,
-            'data': set(),
-            'error': '',
-            'cols': {}
-        }
-
-        # POST has the following parameters
-        # http://www.datatables.net/manual/server-side#Configuration
-
-        table_name = POST.get('table_type','').replace(' ','_')
-        bulk_search_id = POST.get('bulk_search_id')
-
-        config_info = self.get_curr_cols(table_name)
-
-        kwargs = {
-                'query_columns' : config_info['query_columns'],
-                'display_columns' : config_info.get('display_columns',config_info['query_columns']),
-                'filter' : self.filter,
-                'query_config' : config_info['query_config']
-                }
-
-        cached_ind = set()
-        base_query_mod = None
-        query = None
-
+        bulk_search_id = POST.get('bulk_search_id','')
         bulk_search_cache = caches['actionables_bulk_search']
         current_search_info = bulk_search_cache.get(bulk_search_id)
         contains = list(current_search_info['contains'])
         exact = list(current_search_info['exact'])
 
-        to_remove = set()
         for ind in contains:
             curr = {
                 "value__icontains": ind
             }
 
-            curr_hash = sha1(repr(curr)).hexdigest()
-            cached = bulk_search_cache.get(curr_hash, None)
-
-            if cached:
-                to_remove.add(ind)
-                cached_ind.update(cached)
-
+            if not self.base_query_mod:
+                self.base_query_mod = Q(**curr)
             else:
-                if not base_query_mod:
-                    base_query_mod = Q(**curr)
-                else:
-                    base_query_mod |= Q(**curr)
-        contains = list(set(contains) - to_remove)
+                self.base_query_mod |= Q(**curr)
 
-        to_remove.clear()
         for ind,type in exact:
             curr = {
                 "value__iexact": ind,
                 "type__name": type
             }
 
-            curr_hash = sha1(repr(curr)).hexdigest()
-            cached = bulk_search_cache.get(curr_hash, None)
-            if cached:
-                to_remove.add((ind,type))
-                cached_ind.update(cached)
-
+            if not self.base_query_mod:
+                self.base_query_mod = Q(**curr)
             else:
-                if not base_query_mod:
-                    base_query_mod = Q(**curr)
-                else:
-                    base_query_mod |= Q(**curr)
-        exact = list(set(exact) - to_remove)
+                self.base_query_mod |= Q(**curr)
 
-        kwargs['base_query_mod'] = base_query_mod
-        kwargs['cached_ind'] = cached_ind
-
-        #not all the info could be retrieved from cache, so a query is carried out
-        if base_query_mod:
-            logger.debug("About to start database query for user %s for table %s" % (self.request.user,table_name))
-            query,res['recordsTotal'],res['recordsFiltered'] = datatable_query(POST, **kwargs)
-            logger.debug("Finished database query for user %s for table %s; %s results" % (self.request.user,table_name,len(query)))
-        query = set(tuple(x) for x in query) if query else set()
-
-        for ind in contains:
-            curr = {
-                "value__icontains": ind
-            }
-
-            curr_hash = sha1(repr(curr)).hexdigest()
-            bulk_search_cache.set(curr_hash, set(
-                tuple(x) for x in query if ind.lower() in x[3].lower()
-            ))
-
-        for ind,type in exact:
-            curr = {
-                "value__iexact": ind,
-                "type__name": type
-            }
-
-            curr_hash = sha1(repr(curr)).hexdigest()
-            bulk_search_cache.set(curr_hash, set(
-                tuple(x) for x in query if ind.lower() == x[3].lower() and type == x[1]
-            ))
-
-        query.update(cached_ind)
-        self.postprocess(table_name,res,query)
-        logger.debug("Finished postprocessing for user %s for table %s" % (self.request.user,table_name))
-
-        for ind in contains:
-            curr = {
-                "value__icontains": ind
-            }
-
-            curr_hash = sha1(repr(curr)).hexdigest()
-            bulk_search_cache.set(curr_hash, set(
-                tuple(x) for x in query if ind.lower() in x[3].lower()
-            ))
-
-        for ind,type in exact:
-            curr = {
-                "value__iexact": ind,
-                "type__name": type
-            }
-
-            curr_hash = sha1(repr(curr)).hexdigest()
-            bulk_search_cache.set(curr_hash, set(
-                tuple(x) for x in query if ind.lower() == x[3].lower() and type == x[1]
-            ))
-
-        res['data'] = list(res['data'])
-        return res
+        return super(BulkSearchResultTableDataProvider, self).returned_obj
 
 
 class BulkSearchResultView(BasicDatatableView):
