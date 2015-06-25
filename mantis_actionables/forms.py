@@ -148,17 +148,6 @@ class BulkTaggingForm(ResultActionForm):
 class BulkSearchForm(forms.Form):
     search_term = forms.CharField(widget=forms.Textarea(), required=True)
     id = forms.CharField(widget=forms.HiddenInput, required=True)
-
-    # CHOICES_MODE = [
-    #     ("icontains", "Contains Value"),
-    #     ("iexact", "Exact Match")
-    # ]
-    # search_mode = forms.ChoiceField(choices=CHOICES_MODE, widget=forms.RadioSelect(), required=True)
-    #
-    # CHOICES_PARSE = [
-    #     (True, "Parse Textarea"),
-    #     (False, "One Indicator Line by line")
-    # ]
-    # parse_textfield = forms.ChoiceField(choices=CHOICES_PARSE, widget=forms.RadioSelect(), required=True)
+    by_source = forms.BooleanField(widget=forms.CheckboxInput, required=False)
 
 

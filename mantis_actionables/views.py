@@ -104,8 +104,6 @@ def datatable_query(post, **kwargs):
     base_query_mod = kwargs.get('base_query_mod')
     
     if base_query_mod:
-        print "--------"
-        print base_query_mod
         q = config['base'].objects.filter(base_query_mod).all()
     else:
         q = config['base'].objects.all()
@@ -230,6 +228,9 @@ def datatable_query(post, **kwargs):
         q_count_filtered = q.count()
     else:
         q_count_filtered = 100
+
+    q = q.distinct()
+
     # Treat the paging/limit
     length = safe_cast(post_dict.get('length'), int)
     start = safe_cast(post_dict.get('start'), int, 0)
@@ -1823,13 +1824,13 @@ class BulkSearchView(BasicTemplateView):
         return context
 
 
-class BulkSearchResultTableDataProvider(BasicTableDataProvider):
+class BulkSearchResultTableDataProviderBySource(BasicTableDataProvider):
 
-    view_name = "singletons_bulk_search"
+    view_name = "singletons_bulk_search_by_source"
 
     table_spec =  {}
 
-    TABLE_NAME_BULK_SEARCH_RESULT = 'Indicators found in system'
+    TABLE_NAME_BULK_SEARCH_RESULT = 'Indicators found in system (by Source)'
 
     BULK_SEARCH_RESULT_TABLE_SPEC = {
         'model' : SingletonObservable,
@@ -1838,13 +1839,9 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
         'count': False,
         'COMMON_BASE' : [
                 ('sources__timestamp','Source TS','0'), #0
-                #('sources__tlp','TLP','0'), #1
-                ('type__name','Type','0'), #2
-                ('subtype__name','Subtype','0'), #3
-                ('value','Value','1'), #4
-                #('sources__iobject_identifier__namespace__uri','Indicator Source','0'), #5
-                #('sources__related_stix_entities__entity_type__name','Context Type','0'), #6
-                #('sources__related_stix_entities__essence','Context Info','0'), #7
+                ('type__name','Type','0'), #1
+                ('subtype__name','Subtype','0'), #2
+                ('value','Value','1'), #3
             ],
         'QUERY_ONLY' : [('sources__top_level_iobject_identifier__namespace__uri','Report Source','0'), #0
                              ('sources__top_level_iobject__name','Report Name','0'), #1
@@ -1863,7 +1860,7 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
 
     table_spec[table_name_slug(TABLE_NAME_BULK_SEARCH_RESULT)] = BULK_SEARCH_RESULT_TABLE_SPEC
 
-    table_rows = 10
+    table_rows = 50
 
     @classmethod
     def BULK_SEARCH_RESULT_POSTPROCESSOR(cls,table_spec,res,q):
@@ -1872,7 +1869,6 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
         for row in q:
             row = [my_escape(e) for e in list(row)]
 
-            #row[1] = Source.TLP_COLOR_CSS.get(int(row[1]),"ERROR")
             if row[offset+2]:
                 row[offset+1] = "<a href='%s'>%s</a>" % (reverse('url.dingos.view.infoobject',kwargs={'pk':int(row[offset+2])}),
                                                                  row[offset+1])
@@ -1925,6 +1921,85 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
             else:
                 self.base_query_mod |= Q(**curr)
 
+        return super(BulkSearchResultTableDataProviderBySource, self).returned_obj
+
+
+class BulkSearchResultTableDataProvider(BasicTableDataProvider):
+
+    view_name = "singletons_bulk_search_default"
+
+    table_spec =  {}
+
+    TABLE_NAME_BULK_SEARCH_RESULT = 'Indicators found in system (simple)'
+
+    BULK_SEARCH_RESULT_TABLE_SPEC = {
+        'model' : SingletonObservable,
+        'query_modifiers' : [('filter',Q(sources__outdated=False)),
+        ],
+        'count': False,
+        'COMMON_BASE' : [
+                ('type__name','Type','0'), #0
+                ('subtype__name','Subtype','0'), #1
+                ('value','Value','1'), #2
+            ],
+        'QUERY_ONLY' : [('id','Singleton Observable PK','0')], #0
+        'DISPLAY_ONLY' :  [],
+        #column ids (starting with 0 = first column) where a column based filter should be displayed
+        'COLUMN_FILTER' : [0,1,2]
+    }
+
+    table_spec[table_name_slug(TABLE_NAME_BULK_SEARCH_RESULT)] = BULK_SEARCH_RESULT_TABLE_SPEC
+
+    table_rows = 50
+
+    @classmethod
+    def BULK_SEARCH_RESULT_POSTPROCESSOR(cls,table_spec,res,q):
+        offset = table_spec['offset']
+
+        for row in q:
+            row = [my_escape(e) for e in list(row)]
+            row[2] = "<a href='%s'>%s</a>" % (reverse('actionables_singleton_observables_details',kwargs={'pk':int(row[offset])}),
+                                                                 row[2])
+            res['data'].append(row)
+
+
+    def postprocess(self,table_name,res,q):
+        table_spec = self.table_spec[table_name]
+        return self.BULK_SEARCH_RESULT_POSTPROCESSOR(table_spec,res,q)
+
+    @property
+    def returned_obj(self):
+        POST = self.request.POST.copy()
+
+        #retrieve the current search request infos from cache via unique id
+        bulk_search_id = POST.get('bulk_search_id','')
+        bulk_search_cache = caches['actionables_bulk_search']
+        current_search_info = bulk_search_cache.get(bulk_search_id)
+        contains = list(current_search_info['contains'])
+        exact = list(current_search_info['exact'])
+
+        #for each indicator build a Q-object to modify the table base query that the query leads only to suitable SingletonObservables
+        for ind in contains:
+            curr = {
+                "value__icontains": ind
+            }
+
+            if not self.base_query_mod:
+                self.base_query_mod = Q(**curr)
+            else:
+                self.base_query_mod |= Q(**curr)
+
+        for ind,type in exact:
+            curr = {
+                "value__iexact": ind,
+                "type__name": type
+            }
+
+            if not self.base_query_mod:
+                self.base_query_mod = Q(**curr)
+            else:
+                self.base_query_mod |= Q(**curr)
+
         return super(BulkSearchResultTableDataProvider, self).returned_obj
 
 
@@ -1943,13 +2018,20 @@ class BulkSearchResultView(BasicDatatableView):
         bulk_search_cache = caches['actionables_bulk_search']
 
         if not search_form.is_valid():
-            #TODO show error here
+            logger.error("form not valid: %s" % (search_form.errors))
             return HttpResponseRedirect('/mantis/actionables/bulk_search/')
         else:
+            #if 'by_source' checkbox is checked, additional infos are provided by the resulting datatable
+            by_source = search_form.cleaned_data['by_source']
+            if by_source:
+                self.data_provider_class = BulkSearchResultTableDataProviderBySource
+                self.table_spec = [self.data_provider_class.TABLE_NAME_BULK_SEARCH_RESULT]
+
             search_term = search_form.cleaned_data['search_term']
             to_parse = []
             no_parse_ind = []
 
+            #process input line by line and seperate whether icontains query is done or the parser is called and an exact query on value AND type is done
             for line in unicode.splitlines(search_term):
                 line = line.strip()
                 if line.count(" ") > 0:
@@ -1957,10 +2039,12 @@ class BulkSearchResultView(BasicDatatableView):
                 else:
                     no_parse_ind.append(line)
 
+            #unique id for this search request
             self.id = search_form.cleaned_data['id']
 
             to_parse = ' '.join(to_parse)
             extractor = InfoExtractor(to_parse)
+            #add all parser processors which should be used
             processors = [ProcessorMD5,ProcessorIP,ProcessorEmail,ProcessorURI,ProcessorDomain,ProcessorFile]
             map(lambda p : extractor.add_processor(p), processors)
 
@@ -1970,6 +2054,7 @@ class BulkSearchResultView(BasicDatatableView):
 
             #TODO search id is set here in order to retrieve the query infos from the cache when filling datatable
             #entry never expires, should be changed!
+            #save the indicators in cache
             bulk_search_cache.set(self.id, {
                 'contains': no_parse_ind,
                 'exact': parsed_ind

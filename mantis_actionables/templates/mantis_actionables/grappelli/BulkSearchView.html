@@ -19,9 +19,20 @@ Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 {% endcomment %}
 
 {% block content %}
+
+<main id="bulk_search">
+  <p>
+    To perform a bulk search enter a search term in the textarea below.<br>
+    If there is a single string without whitespace in a line, the backend will check whether this value appears in the database (no exact match, search value could be a substring).<br>
+    Otherwise the input from this line is proceeded by the parser in order to find typical observable types. The Backend will check for an exact match on value AND type in this case.<br>
+  </p>
   <form action="result/" method="post">
     {% csrf_token %}
-    {{ form.as_p }}
+    {{ form.id }}
+    {{ form.by_source }}{{ form.by_source.label }}
+    {{ form.search_term }}
     <input type="submit" />
   </form>
+</main>
+
 {% endblock %}

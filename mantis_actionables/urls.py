@@ -66,6 +66,7 @@ urlpatterns = patterns(
     #Bulk Search
     url(r'^bulk_search/$', BulkSearchView.as_view(), name="actionables_bulk_search"),
     url(r'^bulk_search/result/$', BulkSearchResultView.as_view(), name="actionables_bulk_search_result"),
-    url(r'^tbl_data/bulk_search_result$', BulkSearchResultTableDataProvider.as_view(), name="actionables_dataprovider_singletons_bulk_search"),
+    url(r'^tbl_data/bulk_search_result_simple$', BulkSearchResultTableDataProvider.as_view(), name="actionables_dataprovider_singletons_bulk_search_default"),
+    url(r'^tbl_data/bulk_search_result_by_source$', BulkSearchResultTableDataProviderBySource.as_view(), name="actionables_dataprovider_singletons_bulk_search_by_source"),
 
 )

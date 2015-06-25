@@ -88,3 +88,22 @@ table.result_table .tbl_hide {
     border-radius: 100%;
 }*/
 
+/* Actionables Bulk Search */
+main#bulk_search {
+    max-width: 600px;
+}
+
+main#bulk_search p {
+    margin-bottom: 15px;
+}
+
+main#bulk_search textarea#id_search_term {
+    width: 100%;
+    height: 175px;
+    margin-bottom: 15px;
+    resize: vertical;
+}
+
+main#bulk_search input[type='submit'] {
+    display: block;
+}
