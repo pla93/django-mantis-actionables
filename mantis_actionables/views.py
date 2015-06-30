@@ -2007,15 +2007,23 @@ class BulkSearchResultView(BasicDatatableView):
 
     data_provider_class = BulkSearchResultTableDataProvider
 
-    template_name = 'mantis_actionables/%s/table_base.html' % DINGOS_TEMPLATE_FAMILY
+    template_name = 'mantis_actionables/%s/BulkSearchResult.html' % DINGOS_TEMPLATE_FAMILY
 
     title = 'Bulk Search Result'
 
     table_spec = [data_provider_class.TABLE_NAME_BULK_SEARCH_RESULT]
 
+    bulk_search_cache = caches['actionables_bulk_search']
+
+    def get_context_data(self, **kwargs):
+        context = super(BulkSearchResultView, self).get_context_data(**kwargs)
+        current_query = self.bulk_search_cache.get(self.id)
+        context['query_icontains'] = current_query.get("contains")
+        context['query_parsed'] = current_query.get("exact")
+        return context
+
     def post(self, request, *args, **kwargs):
         search_form = BulkSearchForm(request.POST)
-        bulk_search_cache = caches['actionables_bulk_search']
 
         if not search_form.is_valid():
             logger.error("form not valid: %s" % (search_form.errors))
@@ -2055,7 +2063,7 @@ class BulkSearchResultView(BasicDatatableView):
             #TODO search id is set here in order to retrieve the query infos from the cache when filling datatable
             #entry never expires, should be changed!
             #save the indicators in cache
-            bulk_search_cache.set(self.id, {
+            self.bulk_search_cache.set(self.id, {
                 'contains': no_parse_ind,
                 'exact': parsed_ind
             }, None)
