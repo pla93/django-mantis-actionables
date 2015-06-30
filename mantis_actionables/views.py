@@ -72,6 +72,7 @@ CONTENT_TYPE_SINGLETON_OBSERVABLE = ContentType.objects.get_for_model(SingletonO
 #init column_dict
 COLS = {}
 
+actionables_cache = caches['actionables_cache']
 
 def my_escape(value):
     if not value:
@@ -93,7 +94,6 @@ def safe_cast(val, to_type, default=None):
 
 
 def datatable_query(post, **kwargs):
-
     post_dict = parser.parse(str(post.urlencode()))
 
     # Collect prepared statement parameters in here
@@ -101,20 +101,15 @@ def datatable_query(post, **kwargs):
     cols = kwargs.pop('query_columns')
     display_cols = kwargs.pop('display_columns')
     config = kwargs.pop('query_config')
-    base_query_mod = kwargs.get('base_query_mod')
-    
-    if base_query_mod:
-        q = config['base'].objects.filter(base_query_mod).all()
-    else:
-        q = config['base'].objects.all()
 
+    q = config['base'].objects
 
     query_modifiers = config.get('query_modifiers', [])
 
     #base_filters = config.get('filters',[])
     #base_excludes = config.get('excludes',[])
 
-    count =config.get('count',True)
+    count = config.get('count',True)
     cols = dict((x, y[0]) for x, y in cols.items())
 
     display_cols = dict((x, y[0]) for x, y in display_cols.items())
@@ -261,8 +256,11 @@ class BasicTableDataProvider(BasicJSONView):
     #pagination length
     table_rows = 10
 
-    #needed for bulk search
-    base_query_mod = None
+    #query result caching
+    caching = False
+
+    #actionables cache
+    actionables_cache = caches['actionables_cache']
 
     @classmethod
     def get_cols_dict(cls,table_name):
@@ -270,7 +268,6 @@ class BasicTableDataProvider(BasicJSONView):
         table_name = table_name.lower().replace(' ','_')
         provider_specific_dict = COLS.setdefault(cls.__name__,{})
         return provider_specific_dict.setdefault(table_name,{})
-
 
     def post(self, request, *args, **kwargs):
         POST = request.POST
@@ -322,8 +319,6 @@ class BasicTableDataProvider(BasicJSONView):
                 fillColDict(query_columns,COLS_TO_QUERY)
                 fillColDict(display_columns,COLS_TO_DISPLAY)
 
-
-
     def postprocess(self,table_name,res,q):
         #insert fetched rows into result
         for row in q:
@@ -364,11 +359,11 @@ class BasicTableDataProvider(BasicJSONView):
                 'query_columns' : config_info['query_columns'],
                 'display_columns' : config_info.get('display_columns',config_info['query_columns']),
                 'filter' : self.filter,
-                'query_config' : config_info['query_config'],
-                'base_query_mod': self.base_query_mod
+                'query_config' : config_info['query_config']
                 }
 
         logger.debug("About to start database query for user %s for table %s" % (self.request.user,table_name))
+
         q,res['recordsTotal'],res['recordsFiltered'] = datatable_query(POST, **kwargs)
         q = list(q)
         logger.debug("Finished database query for user %s for table %s; %s results" % (self.request.user,table_name,len(q)))
@@ -1895,20 +1890,21 @@ class BulkSearchResultTableDataProviderBySource(BasicTableDataProvider):
     def returned_obj(self):
         POST = self.request.POST.copy()
         bulk_search_id = POST.get('bulk_search_id','')
-        bulk_search_cache = caches['actionables_bulk_search']
-        current_search_info = bulk_search_cache.get(bulk_search_id)
+        current_search_info = actionables_cache.get(bulk_search_id)
         contains = list(current_search_info['contains'])
         exact = list(current_search_info['exact'])
 
+        base_query_mod = None
+        #for each indicator build a Q-object to modify the table base query that the query leads only to suitable SingletonObservables
         for ind in contains:
             curr = {
                 "value__icontains": ind
             }
 
-            if not self.base_query_mod:
-                self.base_query_mod = Q(**curr)
+            if not base_query_mod:
+                base_query_mod = Q(**curr)
             else:
-                self.base_query_mod |= Q(**curr)
+                base_query_mod |= Q(**curr)
 
         for ind,type in exact:
             curr = {
@@ -1916,10 +1912,13 @@ class BulkSearchResultTableDataProviderBySource(BasicTableDataProvider):
                 "type__name": type
             }
 
-            if not self.base_query_mod:
-                self.base_query_mod = Q(**curr)
+            if not base_query_mod:
+                base_query_mod = Q(**curr)
             else:
-                self.base_query_mod |= Q(**curr)
+                base_query_mod |= Q(**curr)
+
+        if base_query_mod:
+            self.BULK_SEARCH_RESULT_TABLE_SPEC['query_modifiers'].append(('filter',base_query_mod))
 
         return super(BulkSearchResultTableDataProviderBySource, self).returned_obj
 
@@ -1952,6 +1951,8 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
 
     table_rows = 50
 
+    id = None
+
     @classmethod
     def BULK_SEARCH_RESULT_POSTPROCESSOR(cls,table_spec,res,q):
         offset = table_spec['offset']
@@ -1962,7 +1963,6 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
                                                                  row[2])
             res['data'].append(row)
 
-
     def postprocess(self,table_name,res,q):
         table_spec = self.table_spec[table_name]
         return self.BULK_SEARCH_RESULT_POSTPROCESSOR(table_spec,res,q)
@@ -1972,22 +1972,22 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
         POST = self.request.POST.copy()
 
         #retrieve the current search request infos from cache via unique id
-        bulk_search_id = POST.get('bulk_search_id','')
-        bulk_search_cache = caches['actionables_bulk_search']
-        current_search_info = bulk_search_cache.get(bulk_search_id)
+        self.id = POST.get('bulk_search_id','')
+        current_search_info = actionables_cache.get(self.id)
         contains = list(current_search_info['contains'])
         exact = list(current_search_info['exact'])
 
+        base_query_mod = None
         #for each indicator build a Q-object to modify the table base query that the query leads only to suitable SingletonObservables
         for ind in contains:
             curr = {
                 "value__icontains": ind
             }
 
-            if not self.base_query_mod:
-                self.base_query_mod = Q(**curr)
+            if not base_query_mod:
+                base_query_mod = Q(**curr)
             else:
-                self.base_query_mod |= Q(**curr)
+                base_query_mod |= Q(**curr)
 
         for ind,type in exact:
             curr = {
@@ -1995,11 +1995,13 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
                 "type__name": type
             }
 
-            if not self.base_query_mod:
-                self.base_query_mod = Q(**curr)
+            if not base_query_mod:
+                base_query_mod = Q(**curr)
             else:
-                self.base_query_mod |= Q(**curr)
+                base_query_mod |= Q(**curr)
 
+        if base_query_mod:
+            self.BULK_SEARCH_RESULT_TABLE_SPEC['query_modifiers'].append(('filter',base_query_mod))
         return super(BulkSearchResultTableDataProvider, self).returned_obj
 
 
@@ -2013,11 +2015,9 @@ class BulkSearchResultView(BasicDatatableView):
 
     table_spec = [data_provider_class.TABLE_NAME_BULK_SEARCH_RESULT]
 
-    bulk_search_cache = caches['actionables_bulk_search']
-
     def get_context_data(self, **kwargs):
         context = super(BulkSearchResultView, self).get_context_data(**kwargs)
-        current_query = self.bulk_search_cache.get(self.id)
+        current_query = actionables_cache.get(self.id)
         context['query_icontains'] = current_query.get("contains")
         context['query_parsed'] = current_query.get("exact")
         return context
@@ -2063,7 +2063,7 @@ class BulkSearchResultView(BasicDatatableView):
             #TODO search id is set here in order to retrieve the query infos from the cache when filling datatable
             #entry never expires, should be changed!
             #save the indicators in cache
-            self.bulk_search_cache.set(self.id, {
+            actionables_cache.set(self.id, {
                 'contains': no_parse_ind,
                 'exact': parsed_ind
             }, None)
