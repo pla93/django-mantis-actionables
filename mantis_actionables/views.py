@@ -21,6 +21,7 @@ import logging
 import json
 from collections import OrderedDict
 from uuid import uuid4
+import operator
 
 import datetime
 from querystring_parser import parser
@@ -250,21 +251,72 @@ def datatable_query_cache(post, **kwargs):
     current_cache = actionables_cache.get(query_id)
     cached_results = current_cache.get('cached_results')
     post_dict = parser.parse(str(post.urlencode()))
-    print "current_cache"
-    print current_cache
+    cols = kwargs.pop('query_columns')
+    cols = dict((x, y[0]) for x, y in cols.items())
+    display_cols = kwargs.pop('display_columns')
+    display_cols = dict((x, y[0]) for x, y in display_cols.items())
 
     if cached_results:
-        pass
-        #process filters etc...
+        data = list(cached_results)
+
+        #Treat the filter values (WHERE clause)
+        col_filters = []
+        for colk, colv in post_dict.get('columns', {}).iteritems():
+            srch = colv.get('search', False)
+            if not srch:
+                continue
+            srch = srch.get('value', False)
+
+            if not srch or (type(srch) == type(basestring) and srch.lower()=='all'):
+                continue
+            # srch should have a value
+
+            col_filter_treatment = display_cols[colk]
+
+            if callable(col_filter_treatment):
+                #TODO change code, that treatment on cached results can be applied
+                #filter_q.append(col_filter_treatment(srch))
+                pass
+
+            else:
+                col_filters.append((colk, unicode(srch)))
+
+        if col_filters:
+            data = []
+            for row in cached_results:
+                if all(srch in row[colk] for colk, srch in col_filters):
+                    data.append(row)
+
+        #treat search value, applied to columns declared as "searchable"
+        col_search = []
+        sv = post_dict.get('search', {})
+        sv = str(sv.get('value', '')).strip()
+        if sv != '':
+            searchable_cols = [x for x in range(len(display_cols)) if post_dict['columns'][x]['searchable'] == "true"]
+            data = []
+            for row in cached_results:
+                if any(sv in row[colk] for colk in searchable_cols):
+                    data.append(row)
+
+        #treat the ordering of columns
+        cols_order = []
+        for colk, colv in post_dict.get('order', {}).iteritems():
+            scol = colv.get('column', 0)
+            sdir = colv.get('dir')
+            if sdir == 'desc':
+                cols_order.append((scol,True))
+            else: #asc + fallback
+                cols_order.append((scol, False))
+
+        if cols_order:
+            #only single row ordering is supported with cached results right now
+            if len(cols_order) == 1:
+                data = sorted(data, key = lambda x: x[cols_order[0][0]].lower(), reverse=cols_order[0][1])
+
     else:
         config = kwargs.pop('query_config')
         query_modifiers = config.get('query_modifiers', [])
         count = config.get('count',True)
-
-        cols = kwargs.pop('query_columns')
-        display_cols = kwargs.pop('display_columns')
-        cols = dict((x, y[0]) for x, y in cols.items())
-        display_cols = dict((x, y[0]) for x, y in display_cols.items())
 
         q = config['base'].objects
 
@@ -300,10 +352,10 @@ def datatable_query_cache(post, **kwargs):
         logger.debug("query carried out, cache is now populated")
         #populate results in cache
 
-        cached_results = list(q)
+        data = list(q)
 
         mod_cache = dict(current_cache)
-        mod_cache.update({"cached_results": cached_results})
+        mod_cache.update({"cached_results": data})
         actionables_cache.set(query_id, mod_cache)
 
     #treat the paging/limit
@@ -312,99 +364,11 @@ def datatable_query_cache(post, **kwargs):
     if start < 0:
         start = 0
     if length > 0:
-        data = cached_results[start:start+length]
+        total_length = len(data)
+        data = data[start:start+length]
 
     #TODO filteed counter add after adding filter function
-    return (data, len(cached_results), -2)
-
-
-
-
-    # # Collect prepared statement parameters in here
-    # params = []
-    #
-    #
-    #
-    #
-    # #treat counting
-    # if count:
-    #     q_count_all = q.count()
-    # else:
-    #     q_count_all = -1
-    #
-    # # Treat the filter values (WHERE clause)
-    # col_filters = []
-    # filter_q = []
-    # for colk, colv in post_dict.get('columns', {}).iteritems():
-    #     srch = colv.get('search', False)
-    #     if not srch:
-    #         continue
-    #     srch = srch.get('value', False)
-    #
-    #     if not srch or (type(srch) == type(basestring) and srch.lower()=='all'):
-    #         continue
-    #     # srch should have a value
-    #
-    #     col_filter_treatment = display_cols[colk]
-    #     if callable(col_filter_treatment):
-    #         filter_q.append(col_filter_treatment(srch))
-    #
-    #     else:
-    #         col_filters.append({
-    #             col_filter_treatment + '__icontains' : srch
-    #         })
-    #
-    # if col_filters:
-    #     queries = [Q(**filter) for filter in col_filters]
-    #     query = queries.pop()
-    #
-    #     # Or the Q object with the ones remaining in the list
-    #     for item in queries:
-    #         query &= item
-    #
-    #     # Query the model
-    #     q = q.filter(query)
-    #
-    # if filter_q:
-    #     query = filter_q.pop()
-    #     for q in filter_q:
-    #         query &= q
-    #
-    #     q = q.filter(query)
-    #
-    # col_search = []
-    # # The search value
-    # sv = post_dict.get('search', {})
-    # sv = str(sv.get('value', '')).strip()
-    # if sv != '':
-    #     for n,c in display_cols.iteritems():
-    #
-    #         if post_dict['columns'][n]['searchable'] == "true":
-    #             col_search.append({
-    #                 c + '__icontains' : sv
-    #             })
-    #
-    # if col_search:
-    #     queries = [Q(**filter) for filter in col_search]
-    #     query = queries.pop()
-    #
-    #     # Or the Q object with the ones remaining in the list
-    #     for item in queries:
-    #         query |= item
-    #
-    #     # Query the model
-    #     q = q.filter(query)
-    #
-    #
-    #
-    #
-    # if True:
-    #     q_count_filtered = q.count()
-    # else:
-    #     q_count_filtered = 100
-    #
-    # q = q.distinct()
-    #
+    return (data, -1, total_length)
 
 
 class BasicTableDataProvider(BasicJSONView):
@@ -2006,8 +1970,8 @@ class BulkSearchResultTableDataProviderBySource(BasicTableDataProvider):
         'count': False,
         'COMMON_BASE' : [
                 ('sources__timestamp','Source TS','0'), #0
-                ('type__name','Type','0'), #1
-                ('subtype__name','Subtype','0'), #2
+                ('type__name','Type','1'), #1
+                ('subtype__name','Subtype','1'), #2
                 ('value','Value','1'), #3
             ],
         'QUERY_ONLY' : [('sources__top_level_iobject_identifier__namespace__uri','Report Source','0'), #0
@@ -2111,8 +2075,8 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
         ],
         'count': False,
         'COMMON_BASE' : [
-                ('type__name','Type','0'), #0
-                ('subtype__name','Subtype','0'), #1
+                ('type__name','Type','1'), #0
+                ('subtype__name','Subtype','1'), #1
                 ('value','Value','1'), #2
             ],
         'QUERY_ONLY' : [('id','Singleton Observable PK','0')], #0
