@@ -221,12 +221,14 @@ def datatable_query(post, **kwargs):
     if order_cols:
         q = q.order_by(*order_cols)
 
+    #sources__id for join on sources table
+    #values_list() has to be called here, otherwise the query isn't correct
+    q = q.distinct().values_list(*(cols.values()))
+
     if True:
         q_count_filtered = q.count()
     else:
         q_count_filtered = 100
-
-    q = q.distinct()
 
     # Treat the paging/limit
     length = safe_cast(post_dict.get('length'), int)
@@ -237,10 +239,6 @@ def datatable_query(post, **kwargs):
         q = q[start:start+length]
         params.append(length)
         params.append(start)
-
-    #sources__id for join on sources table
-    #values_list() has to be called here, otherwise the query isn't correct
-    q = q.values_list(*(cols.values()))
 
     #return (q,-1,-1)
     return (q, q_count_all,q_count_filtered)
