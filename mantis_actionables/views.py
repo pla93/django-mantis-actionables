@@ -327,9 +327,6 @@ def datatable_query_cache(post, **kwargs):
             else:
                 raise ValueError("Please provide valid query modifier: %s is not valid." % mode)
 
-        #neccessary here? check for it later ..
-        #q = q.values_list(*(cols.values()))
-
         #treat the ordering of columns
         order_cols = []
         for colk, colv in post_dict.get('order', {}).iteritems():
@@ -365,7 +362,6 @@ def datatable_query_cache(post, **kwargs):
         total_length = len(data)
         data = data[start:start+length]
 
-    #TODO filteed counter add after adding filter function
     return (data, -1, total_length)
 
 
