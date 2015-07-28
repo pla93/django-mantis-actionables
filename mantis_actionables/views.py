@@ -19,6 +19,7 @@
 
 import logging
 import json
+from collections import OrderedDict
 from uuid import uuid4
 
 import datetime
@@ -244,6 +245,168 @@ def datatable_query(post, **kwargs):
     return (q, q_count_all,q_count_filtered)
 
 
+def datatable_query_cache(post, **kwargs):
+    query_id = kwargs.pop('id')
+    current_cache = actionables_cache.get(query_id)
+    cached_results = current_cache.get('cached_results')
+    post_dict = parser.parse(str(post.urlencode()))
+    print "current_cache"
+    print current_cache
+
+    if cached_results:
+        pass
+        #process filters etc...
+    else:
+        config = kwargs.pop('query_config')
+        query_modifiers = config.get('query_modifiers', [])
+        count = config.get('count',True)
+
+        cols = kwargs.pop('query_columns')
+        display_cols = kwargs.pop('display_columns')
+        cols = dict((x, y[0]) for x, y in cols.items())
+        display_cols = dict((x, y[0]) for x, y in display_cols.items())
+
+        q = config['base'].objects
+
+        #treat base query modifications
+        for mode, q_obj in query_modifiers:
+            if mode == 'filter':
+                q = q.filter(q_obj)
+            elif mode == 'exclude':
+                q = q.exclude(q_obj)
+            else:
+                raise ValueError("Please provide valid query modifier: %s is not valid." % mode)
+
+        #neccessary here? check for it later ..
+        #q = q.values_list(*(cols.values()))
+
+        #treat the ordering of columns
+        order_cols = []
+        for colk, colv in post_dict.get('order', {}).iteritems():
+            scol = colv.get('column', 0)
+            scol = cols.get(scol)
+            if not scol:
+                scol = cols[0]
+            sdir = colv.get('dir')
+            if sdir == 'desc':
+                order_cols.append('-' + scol)
+            else: #asc + fallback
+                order_cols.append(scol)
+        if order_cols:
+            q = q.order_by(*order_cols)
+
+        q = q.distinct().values_list(*(cols.values()))
+
+        logger.debug("query carried out, cache is now populated")
+        #populate results in cache
+
+        cached_results = list(q)
+
+        mod_cache = dict(current_cache)
+        mod_cache.update({"cached_results": cached_results})
+        actionables_cache.set(query_id, mod_cache)
+
+    #treat the paging/limit
+    length = safe_cast(post_dict.get('length'), int)
+    start = safe_cast(post_dict.get('start'), int, 0)
+    if start < 0:
+        start = 0
+    if length > 0:
+        data = cached_results[start:start+length]
+
+    #TODO filteed counter add after adding filter function
+    return (data, len(cached_results), -2)
+
+
+
+
+    # # Collect prepared statement parameters in here
+    # params = []
+    #
+    #
+    #
+    #
+    # #treat counting
+    # if count:
+    #     q_count_all = q.count()
+    # else:
+    #     q_count_all = -1
+    #
+    # # Treat the filter values (WHERE clause)
+    # col_filters = []
+    # filter_q = []
+    # for colk, colv in post_dict.get('columns', {}).iteritems():
+    #     srch = colv.get('search', False)
+    #     if not srch:
+    #         continue
+    #     srch = srch.get('value', False)
+    #
+    #     if not srch or (type(srch) == type(basestring) and srch.lower()=='all'):
+    #         continue
+    #     # srch should have a value
+    #
+    #     col_filter_treatment = display_cols[colk]
+    #     if callable(col_filter_treatment):
+    #         filter_q.append(col_filter_treatment(srch))
+    #
+    #     else:
+    #         col_filters.append({
+    #             col_filter_treatment + '__icontains' : srch
+    #         })
+    #
+    # if col_filters:
+    #     queries = [Q(**filter) for filter in col_filters]
+    #     query = queries.pop()
+    #
+    #     # Or the Q object with the ones remaining in the list
+    #     for item in queries:
+    #         query &= item
+    #
+    #     # Query the model
+    #     q = q.filter(query)
+    #
+    # if filter_q:
+    #     query = filter_q.pop()
+    #     for q in filter_q:
+    #         query &= q
+    #
+    #     q = q.filter(query)
+    #
+    # col_search = []
+    # # The search value
+    # sv = post_dict.get('search', {})
+    # sv = str(sv.get('value', '')).strip()
+    # if sv != '':
+    #     for n,c in display_cols.iteritems():
+    #
+    #         if post_dict['columns'][n]['searchable'] == "true":
+    #             col_search.append({
+    #                 c + '__icontains' : sv
+    #             })
+    #
+    # if col_search:
+    #     queries = [Q(**filter) for filter in col_search]
+    #     query = queries.pop()
+    #
+    #     # Or the Q object with the ones remaining in the list
+    #     for item in queries:
+    #         query |= item
+    #
+    #     # Query the model
+    #     q = q.filter(query)
+    #
+    #
+    #
+    #
+    # if True:
+    #     q_count_filtered = q.count()
+    # else:
+    #     q_count_filtered = 100
+    #
+    # q = q.distinct()
+    #
+
+
 class BasicTableDataProvider(BasicJSONView):
     #add here filters and select_related statements to the base query
     filter = {}
@@ -364,8 +527,17 @@ class BasicTableDataProvider(BasicJSONView):
 
         logger.debug("About to start database query for user %s for table %s" % (self.request.user,table_name))
 
-        q,res['recordsTotal'],res['recordsFiltered'] = datatable_query(POST, **kwargs)
-        q = list(q)
+        #if no id is provided, caching won't work and query the database for every call
+        if self.caching and self.id:
+            kwargs.update({
+                'id': self.id
+            })
+            q,res['recordsTotal'],res['recordsFiltered'] = datatable_query_cache(POST, **kwargs)
+
+        else:
+            q,res['recordsTotal'],res['recordsFiltered'] = datatable_query(POST, **kwargs)
+            q = list(q)
+
         logger.debug("Finished database query for user %s for table %s; %s results" % (self.request.user,table_name,len(q)))
 
         self.postprocess(table_name,res,q)
@@ -1918,7 +2090,9 @@ class BulkSearchResultTableDataProviderBySource(BasicTableDataProvider):
                 base_query_mod |= Q(**curr)
 
         if base_query_mod:
-            self.BULK_SEARCH_RESULT_TABLE_SPEC['query_modifiers'].append(('filter',base_query_mod))
+            new_mod = list(self.BULK_SEARCH_RESULT_TABLE_SPEC.get('query_modifiers', []))
+            new_mod.append(("filter", base_query_mod))
+            self.curr_cols['query_config']['query_modifiers'] = new_mod
 
         return super(BulkSearchResultTableDataProviderBySource, self).returned_obj
 
@@ -1952,6 +2126,8 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
     table_rows = 50
 
     id = None
+
+    caching = True
 
     @classmethod
     def BULK_SEARCH_RESULT_POSTPROCESSOR(cls,table_spec,res,q):
@@ -2001,7 +2177,9 @@ class BulkSearchResultTableDataProvider(BasicTableDataProvider):
                 base_query_mod |= Q(**curr)
 
         if base_query_mod:
-            self.BULK_SEARCH_RESULT_TABLE_SPEC['query_modifiers'].append(('filter',base_query_mod))
+            new_mod = list(self.BULK_SEARCH_RESULT_TABLE_SPEC.get('query_modifiers', []))
+            new_mod.append(("filter", base_query_mod))
+            self.curr_cols['query_config']['query_modifiers'] = new_mod
         return super(BulkSearchResultTableDataProvider, self).returned_obj
 
 
@@ -2065,7 +2243,8 @@ class BulkSearchResultView(BasicDatatableView):
             #save the indicators in cache
             actionables_cache.set(self.id, {
                 'contains': no_parse_ind,
-                'exact': parsed_ind
+                'exact': parsed_ind,
+                'cached_results': []
             }, None)
         return super(BulkSearchResultView, self).get(request, *args, **kwargs)
 
